@@ -2,6 +2,7 @@
  * Copyright (c) 2025 Diego Satizabal
  * SPDX-License-Identifier: Apache-2.0
  */
+
 `default_nettype none
 
 module tqvp_dsatizabal_fpu (
@@ -43,8 +44,8 @@ module tqvp_dsatizabal_fpu (
                 endcase
             end
 
-            // Start operation when control is written
-            if (control != 0 && !busy) begin
+            // Start operation when control written and non-zero
+            if (data_write_n != 2'b11 && address == 6'h08 && data_in[1:0] != 2'b00 && !busy) begin
                 busy <= 1;
             end
         end
@@ -53,9 +54,12 @@ module tqvp_dsatizabal_fpu (
     // Combinational core modules
     wire [31:0] add_result, mul_result;
 
+    // Subtraction logic: invert sign bit of operand_b if control == 2'b11
+    wire [31:0] b_muxed = (control == 2'b11) ? {~operand_b[31], operand_b[30:0]} : operand_b;
+
     fpu_add add_inst (
         .a(operand_a),
-        .b(operand_b),
+        .b(b_muxed),
         .result(add_result)
     );
 
@@ -71,8 +75,9 @@ module tqvp_dsatizabal_fpu (
             result <= 0;
         end else if (busy) begin
             case (control)
-                2'b01: result <= add_result;
-                2'b10: result <= mul_result;
+                2'b01: result <= add_result; // ADD
+                2'b10: result <= mul_result; // MUL
+                2'b11: result <= add_result; // SUB (using inverted B)
                 default: result <= 32'h0;
             endcase
             busy <= 0;
@@ -89,7 +94,6 @@ module tqvp_dsatizabal_fpu (
                       32'h0;
 
     assign data_ready = 1;
-
     assign uo_out = 0;
     assign user_interrupt = 0;
     wire _unused = &{ui_in, data_read_n};
