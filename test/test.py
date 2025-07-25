@@ -71,7 +71,7 @@ async def test_project(dut):
     # Interrupt doesn't clear
     await ClockCycles(dut.clk, 10)
     assert await tqv.is_interrupt_asserted()
-    
+
     # Write bottom bit of address 8 high to clear
     await tqv.write_byte_reg(8, 1)
     assert not await tqv.is_interrupt_asserted()

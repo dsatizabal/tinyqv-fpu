@@ -23,7 +23,7 @@ class TinyQV:
         self.dut.uio_in.value = 0
         self.dut.rst_n.value = 0
         await ClockCycles(self.dut.clk, 10)
-        self.dut.rst_n.value = 1  
+        self.dut.rst_n.value = 1
         assert self.dut.uio_oe.value == 0b00001011
 
     # Write a value to a byte register in your design
@@ -61,7 +61,7 @@ class TinyQV:
     # The returned value is the data read from the register
     async def read_word_reg(self, reg):
         return await spi_read_cpha0(self.dut.clk, self.dut.uio_in, self.dut.uio_out, self.dut.uio_out[1], reg, 0, 2)
-    
+
     # Check whether the user interrupt is asserted
     async def is_interrupt_asserted(self):
         return self.dut.uio_out[0].value == 1
