@@ -45,7 +45,9 @@ async def test_add_and_mul(dut):
         (0.5, 0.25, 0.75, 0.125),
         (10.0, 5.0, 15.0, 50.0),
         (1000.0, 0.01, 1000.009948, 10.0), # Sum gets affected by precision, check later
-        (0.0, 0.0, 0.0, 4.0) # TODO: Multiplication is returning 4, fix later
+        (0.0, 0.0, 0.0, 0.0),
+        (15.0, 0.0, 15.0, 0.0),
+        (77.82, 1.0, 78.82, 77.82),
     ]
 
     for a, b, expected_sum, expected_mul in tests:

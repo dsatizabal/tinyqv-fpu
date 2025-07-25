@@ -14,11 +14,11 @@ module fpu_mult (
     // Unpack operands
     wire sign_a       = a[31];
     wire [7:0] exp_a  = a[30:23];
-    wire [23:0] frac_a = {1'b1, a[22:0]};  // implied 1 as per IEEE 754
+    wire [23:0] frac_a = (exp_a == 0) ? {1'b0, a[22:0]} : {1'b1, a[22:0]};  // implied 1 as per IEEE 754
 
     wire sign_b       = b[31];
     wire [7:0] exp_b  = b[30:23];
-    wire [23:0] frac_b = {1'b1, b[22:0]};  // implied 1 as per IEEE 754
+    wire [23:0] frac_b = (exp_b == 0) ? {1'b0, b[22:0]} : {1'b1, b[22:0]};  // implied 1 as per IEEE 754
 
     // Multiply mantissas: 24-bit × 24-bit = 48-bit
     wire [47:0] product = frac_a * frac_b;
@@ -34,7 +34,14 @@ module fpu_mult (
     // Result sign: XOR of input signs
     wire result_sign = sign_a ^ sign_b;
 
+    // Zero detection: if either input is exactly zero, output zero
+    wire a_is_zero = (a[30:0] == 31'b0);
+    wire b_is_zero = (b[30:0] == 31'b0);
+    wire is_zero_result = a_is_zero || b_is_zero;
+
     // Pack result
-    assign result = {result_sign, norm_exp, norm_mantissa};
+    assign result = is_zero_result ?
+        32'b0 :  // IEEE 754 representation of +0.0
+        {result_sign, norm_exp, norm_mantissa};
 
 endmodule
