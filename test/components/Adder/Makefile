@@ -15,5 +15,5 @@ test:
 	PYTHONOPTIMIZE=${NOASSERT} vvp -M $$(cocotb-config --prefix)/cocotb/libs -m libcocotbvpi_icarus sim_build/sim.vvp
 	! grep failure results.xml
 
-gtkwave:
+view:
 	gtkwave fpu_adder.vcd fpu_adder.gtkw
