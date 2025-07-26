@@ -110,7 +110,7 @@ module fpu_add_pipelined (
                 end else if (s2_is_inf_b) begin
                     result <= {s2_sign_b, 8'hFF, 23'b0};
                 end else if (s2_sum == 0) begin
-                    result <= 32'b0;  // explicit zero result
+                    result <= 32'b0;
                 end else begin
                     reg [7:0]  exp;
                     reg [23:0] frac;
@@ -125,10 +125,17 @@ module fpu_add_pipelined (
                         frac = s2_sum[24:1];
                         exp = exp + 1;
                     end else begin
-                        while (frac[23] == 0 && exp > 0) begin
-                            frac = frac << 1;
-                            exp = exp - 1;
-                            shift = shift + 1;
+                        // Bounded loop version (Yosys friendly)
+                        integer i;
+                        for (i = 0; i < 24; i = i + 1) begin
+                            if (frac[23] == 0 && exp > 0) begin
+                                frac = frac << 1;
+                                exp = exp - 1;
+                                shift = shift + 1;
+                            end else begin
+                                // Exit normalization when leading 1 is found
+                                i = 24; // effectively break
+                            end
                         end
                     end
 
