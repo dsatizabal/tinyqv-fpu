@@ -41,10 +41,16 @@ async def test_add_mul_sub_edge(dut):
     await RisingEdge(dut.clk)
 
     tests = [
-        (3.5, 1.25), (-2.0, 5.0), (0.0, 0.0),
-        (float('inf'), 1.0), (float('-inf'), float('inf')),
-        (float('nan'), 1.0), (1.0, float('nan')),
-        (1.0, 0.0), (0.0, 1.0), (33.33, 1.0)
+        (3.5, 1.25),
+        (-2.0, 5.0),
+        (0.0, 0.0),
+        (float('inf'), 1.0),
+        (float('-inf'), float('inf')),
+        (float('nan'), 1.0),
+        (1.0, float('nan')),
+        (1.0, 0.0),
+        (0.0, 1.0),
+        (33.33, 1.0)
     ]
 
     for a, b in tests:

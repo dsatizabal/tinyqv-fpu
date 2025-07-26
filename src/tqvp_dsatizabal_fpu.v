@@ -1,8 +1,3 @@
-/*
- * Copyright (c) 2025 Diego Satizabal
- * SPDX-License-Identifier: Apache-2.0
- */
-
 `default_nettype none
 
 module tqvp_dsatizabal_fpu (
@@ -21,71 +16,101 @@ module tqvp_dsatizabal_fpu (
 
     output        user_interrupt
 );
-    // Define memory-mapped registers
+
+    // === Memory-mapped Registers ===
     reg [31:0] operand_a;
     reg [31:0] operand_b;
     reg [1:0]  control;
     reg [31:0] result;
     reg        busy;
 
-    // Write logic
-    always @(posedge clk) begin
+    // === FSM States ===
+    typedef enum logic [1:0] {
+        IDLE  = 2'b00,
+        START = 2'b01,
+        WAIT  = 2'b10
+    } fpu_state_t;
+
+    fpu_state_t state;
+
+    // === Input Control Logic ===
+    wire [31:0] b_muxed = (control == 2'b11) ? {~operand_b[31], operand_b[30:0]} : operand_b;
+    reg         valid_in;
+
+    // === Pipelined Adder ===
+    wire [31:0] add_result;
+    wire        add_valid_out;
+
+    fpu_add_pipelined add_inst (
+        .clk(clk),
+        .rst_n(rst_n),
+        .valid_in(valid_in && (control == 2'b01 || control == 2'b11)),
+        .a(operand_a),
+        .b(b_muxed),
+        .valid_out(add_valid_out),
+        .result(add_result)
+    );
+
+    // === Pipelined Multiplier ===
+    wire [31:0] mul_result;
+    wire        mul_valid_out;
+
+    fpu_mult_pipelined mul_inst (
+        .clk(clk),
+        .rst_n(rst_n),
+        .valid_in(valid_in && (control == 2'b10)),
+        .a(operand_a),
+        .b(operand_b),
+        .valid_out(mul_valid_out),
+        .result(mul_result)
+    );
+
+    // === Write Logic ===
+    always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             operand_a <= 0;
             operand_b <= 0;
             control   <= 0;
+            valid_in  <= 0;
+            state     <= IDLE;
             busy      <= 0;
+            result    <= 0;
         end else begin
-            if (data_write_n != 2'b11) begin
-                case (address)
-                    6'h00: operand_a <= data_in;
-                    6'h04: operand_b <= data_in;
-                    6'h08: control   <= data_in[1:0];
-                endcase
-            end
+            valid_in <= 0;  // default
 
-            // Start operation when control written and non-zero
-            if (data_write_n != 2'b11 && address == 6'h08 && data_in[1:0] != 2'b00 && !busy) begin
-                busy <= 1;
-            end
-        end
-    end
+            case (state)
+                IDLE: begin
+                    busy <= 0;
+                    if (data_write_n != 2'b11) begin
+                        case (address)
+                            6'h00: operand_a <= data_in;
+                            6'h04: operand_b <= data_in;
+                            6'h08: begin
+                                control <= data_in[1:0];
+                                if (data_in[1:0] != 2'b00) begin
+                                    valid_in <= 1;
+                                    busy     <= 1;
+                                    state    <= WAIT;
+                                end
+                            end
+                        endcase
+                    end
+                end
 
-    // Combinational core modules
-    wire [31:0] add_result, mul_result;
-
-    // Subtraction logic: invert sign bit of operand_b if control == 2'b11
-    wire [31:0] b_muxed = (control == 2'b11) ? {~operand_b[31], operand_b[30:0]} : operand_b;
-
-    fpu_add add_inst (
-        .a(operand_a),
-        .b(b_muxed),
-        .result(add_result)
-    );
-
-    fpu_mult mult_inst (
-        .a(operand_a),
-        .b(operand_b),
-        .result(mul_result)
-    );
-
-    // Compute result
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            result <= 0;
-        end else if (busy) begin
-            case (control)
-                2'b01: result <= add_result; // ADD
-                2'b10: result <= mul_result; // MUL
-                2'b11: result <= add_result; // SUB (using inverted B)
-                default: result <= 32'h0;
+                WAIT: begin
+                    if ((control == 2'b01 || control == 2'b11) && add_valid_out) begin
+                        result <= add_result;
+                        state  <= IDLE;
+                    end else if (control == 2'b10 && mul_valid_out) begin
+                        result <= mul_result;
+                        state  <= IDLE;
+                    end
+                end
             endcase
-            busy <= 0;
-            control <= 0;
         end
     end
 
-    // Read logic
+    // === Read Logic ===
     assign data_out = (address == 6'h00) ? operand_a :
                       (address == 6'h04) ? operand_b :
                       (address == 6'h08) ? {30'b0, control} :

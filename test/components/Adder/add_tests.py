@@ -1,16 +1,43 @@
 import cocotb
-from cocotb.triggers import Timer
+from cocotb.triggers import RisingEdge, Timer
+from cocotb.clock import Clock
 import struct
 import math
+
 
 def float_to_hex(f):
     return struct.unpack('>I', struct.pack('>f', f))[0]
 
+
 def hex_to_float(h):
     return struct.unpack('>f', struct.pack('>I', h))[0]
 
+
+async def apply_and_wait(dut, a, b):
+    dut.a.value = float_to_hex(a)
+    dut.b.value = float_to_hex(b)
+    dut.valid_in.value = 1
+
+    await RisingEdge(dut.clk)  # Apply inputs
+    dut.valid_in.value = 0
+
+    # Wait for valid_out
+    while dut.valid_out.value != 1:
+        await RisingEdge(dut.clk)
+
+    actual = hex_to_float(int(dut.result.value))
+    return actual
+
+
 @cocotb.test()
 async def test_fpu_add_normal(dut):
+    cocotb.start_soon(Clock(dut.clk, 10, units='ns').start())
+    dut.rst_n.value = 0
+    dut.valid_in.value = 0
+    await RisingEdge(dut.clk)
+    dut.rst_n.value = 1
+    await RisingEdge(dut.clk)
+
     tests = [
         (3.5, 1.25, 4.75),
         (1.0, 2.0, 3.0),
@@ -19,15 +46,20 @@ async def test_fpu_add_normal(dut):
         (0.0, 0.0, 0.0)
     ]
     for a, b, expected in tests:
-        dut.a.value = float_to_hex(a)
-        dut.b.value = float_to_hex(b)
-        await Timer(10, units='ns')
-        actual = hex_to_float(int(dut.result.value))
+        actual = await apply_and_wait(dut, a, b)
         assert abs(actual - expected) < 1e-5, f"FAIL: {a} + {b} = {actual}, expected {expected}"
         dut._log.info(f"PASS: {a} + {b} = {actual}")
 
+
 @cocotb.test()
 async def test_fpu_add_with_signs(dut):
+    cocotb.start_soon(Clock(dut.clk, 10, units='ns').start())
+    dut.rst_n.value = 0
+    dut.valid_in.value = 0
+    await RisingEdge(dut.clk)
+    dut.rst_n.value = 1
+    await RisingEdge(dut.clk)
+
     tests = [
         (-1.0, -2.0, -3.0),
         (5.0, -2.0, 3.0),
@@ -36,15 +68,20 @@ async def test_fpu_add_with_signs(dut):
         (-1.5, 1.5, 0.0)
     ]
     for a, b, expected in tests:
-        dut.a.value = float_to_hex(a)
-        dut.b.value = float_to_hex(b)
-        await Timer(10, units='ns')
-        actual = hex_to_float(int(dut.result.value))
+        actual = await apply_and_wait(dut, a, b)
         assert abs(actual - expected) < 1e-5, f"FAIL: {a} + {b} = {actual}, expected {expected}"
         dut._log.info(f"PASS: {a} + {b} = {actual}")
 
+
 @cocotb.test()
 async def test_fpu_subtraction(dut):
+    cocotb.start_soon(Clock(dut.clk, 10, units='ns').start())
+    dut.rst_n.value = 0
+    dut.valid_in.value = 0
+    await RisingEdge(dut.clk)
+    dut.rst_n.value = 1
+    await RisingEdge(dut.clk)
+
     tests = [
         (5.0, 2.0, 3.0),
         (2.0, 5.0, -3.0),
@@ -53,15 +90,20 @@ async def test_fpu_subtraction(dut):
         (3.5, 3.5, 0.0)
     ]
     for a, b, expected in tests:
-        dut.a.value = float_to_hex(a)
-        dut.b.value = float_to_hex(-b)  # emulate subtraction as a + (-b)
-        await Timer(10, units='ns')
-        actual = hex_to_float(int(dut.result.value))
+        actual = await apply_and_wait(dut, a, -b)
         assert abs(actual - expected) < 1e-5, f"FAIL: {a} - {b} = {actual}, expected {expected}"
         dut._log.info(f"PASS: {a} - {b} = {actual}")
 
+
 @cocotb.test()
 async def test_fpu_edge_cases(dut):
+    cocotb.start_soon(Clock(dut.clk, 10, units='ns').start())
+    dut.rst_n.value = 0
+    dut.valid_in.value = 0
+    await RisingEdge(dut.clk)
+    dut.rst_n.value = 1
+    await RisingEdge(dut.clk)
+
     nan = float('nan')
     inf = float('inf')
     tests = [
@@ -78,10 +120,7 @@ async def test_fpu_edge_cases(dut):
         (0.0, nan, nan)
     ]
     for a, b, expected in tests:
-        dut.a.value = float_to_hex(a)
-        dut.b.value = float_to_hex(b)
-        await Timer(10, units='ns')
-        actual = hex_to_float(int(dut.result.value))
+        actual = await apply_and_wait(dut, a, b)
 
         if math.isnan(expected):
             assert math.isnan(actual), f"FAIL: {a} + {b} = {actual}, expected NaN"
