@@ -7,10 +7,10 @@ module tqvp_dsatizabal_fpu (
     input  [7:0]  ui_in,
     output [7:0]  uo_out,
 
-    input [5:0]   address,
-    input [31:0]  data_in,
-    input [1:0]   data_write_n,
-    input [1:0]   data_read_n,
+    input  [5:0]  address,
+    input  [31:0] data_in,
+    input  [1:0]  data_write_n,
+    input  [1:0]  data_read_n,
     output [31:0] data_out,
     output        data_ready,
 
@@ -20,22 +20,39 @@ module tqvp_dsatizabal_fpu (
     // === Memory-mapped Registers ===
     reg [31:0] operand_a;
     reg [31:0] operand_b;
-    reg [1:0]  control;
-    reg [31:0] result;
+    reg [2:0]  operation;
+
     reg        busy;
+    reg        valid_in;
+
+    reg [31:0] result;
+    reg        ready;
 
     // === FSM States ===
-    typedef enum logic [1:0] {
-        IDLE  = 2'b00,
-        START = 2'b01,
-        WAIT  = 2'b10
+    typedef enum logic [2:0] {
+        IDLE            = 3'b000,
+        READING         = 3'b001,
+        OPERANDS_READY  = 3'b010,
+        CALCULATING     = 3'b011,
+        WRITING         = 3'b100
     } fpu_state_t;
 
-    fpu_state_t state;
+    reg[1:0] state;
 
-    // === Input Control Logic ===
-    wire [31:0] b_muxed = (control == 2'b11) ? {~operand_b[31], operand_b[30:0]} : operand_b;
-    reg         valid_in;
+    // === FPU Operations ===
+    typedef enum logic [2:0] {
+        ADD     = 3'b000,
+        SUB     = 3'b001,
+        MULT    = 3'b010,
+        DIV     = 3'b011,
+        SQRT    = 3'b100,
+        ABS     = 3'b101,
+        MIN     = 3'b110,
+        CONV    = 3'b111
+    } fpu_operations_t;
+
+    // === Muxed B for subtract
+    wire [31:0] b_muxed = (operation == SUB) ? {operand_b[31:16], ~operand_b[15], operand_b[14:0]} : operand_b;
 
     // === Pipelined Adder ===
     wire [31:0] add_result;
@@ -44,9 +61,9 @@ module tqvp_dsatizabal_fpu (
     fpu_add_pipelined add_inst (
         .clk(clk),
         .rst_n(rst_n),
-        .valid_in(valid_in && (control == 2'b01 || control == 2'b11)),
-        .a(operand_a),
-        .b(b_muxed),
+        .valid_in(valid_in && (operation == ADD || operation == SUB) && (state == OPERANDS_READY)),
+        .a({16'b0, operand_a[15:0]}),
+        .b({16'b0, b_muxed[15:0]}),
         .valid_out(add_valid_out),
         .result(add_result)
     );
@@ -58,52 +75,63 @@ module tqvp_dsatizabal_fpu (
     fpu_mult_pipelined mul_inst (
         .clk(clk),
         .rst_n(rst_n),
-        .valid_in(valid_in && (control == 2'b10)),
-        .a(operand_a),
-        .b(operand_b),
+        .valid_in(valid_in && (operation == MULT) && (state == OPERANDS_READY)),
+        .a({16'b0, operand_a[15:0]}),
+        .b({16'b0, operand_b[15:0]}),
         .valid_out(mul_valid_out),
         .result(mul_result)
     );
 
-    // === Write Logic ===
+    // === Write Logic & FSM ===
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            operand_a <= 0;
-            operand_b <= 0;
-            control   <= 0;
-            valid_in  <= 0;
-            state     <= IDLE;
-            busy      <= 0;
-            result    <= 0;
+            operand_a     <= 0;
+            operand_b     <= 0;
+            operation     <= 0;
+            valid_in      <= 0;
+            busy          <= 0;
+            state         <= IDLE;
+            result        <= 0;
+            ready         <= 0;
         end else begin
-            valid_in <= 0;  // default
-
             case (state)
                 IDLE: begin
-                    busy <= 0;
                     if (data_write_n != 2'b11) begin
-                        case (address)
-                            6'h00: operand_a <= data_in;
-                            6'h04: operand_b <= data_in;
-                            6'h08: begin
-                                control <= data_in[1:0];
-                                if (data_in[1:0] != 2'b00) begin
-                                    valid_in <= 1;
-                                    busy     <= 1;
-                                    state    <= WAIT;
-                                end
-                            end
-                        endcase
+                        if (address[1:0] == 2'b00) begin
+                            operation    <= address[4:2];
+                            operand_a    <= data_in;
+                            ready        <= 0;
+                            busy         <= 1;
+                            state        <= READING;
+                        end
                     end
                 end
 
-                WAIT: begin
-                    if ((control == 2'b01 || control == 2'b11) && add_valid_out) begin
+                READING: begin
+                    if (data_write_n != 2'b11) begin
+                        if (address[1:0] == 2'b01) begin
+                            operand_b    <= data_in;
+                            state        <= OPERANDS_READY;
+                            valid_in     <= 1;
+                        end
+                    end
+                end
+
+                OPERANDS_READY: begin
+                    state        <= CALCULATING;
+                end
+
+                CALCULATING: begin
+                    if (add_valid_out) begin
                         result <= add_result;
                         state  <= IDLE;
-                    end else if (control == 2'b10 && mul_valid_out) begin
+                        ready  <= 1;
+                        busy   <= 0;
+                    end else if (mul_valid_out) begin
                         result <= mul_result;
                         state  <= IDLE;
+                        ready  <= 1;
+                        busy   <= 0;
                     end
                 end
             endcase
@@ -111,16 +139,20 @@ module tqvp_dsatizabal_fpu (
     end
 
     // === Read Logic ===
+    // === Read Logic ===
     assign data_out = (address == 6'h00) ? operand_a :
                       (address == 6'h04) ? operand_b :
-                      (address == 6'h08) ? {30'b0, control} :
+                      (address == 6'h08) ? {29'b0, operation} : // TODO: do I need to add control signals?
                       (address == 6'h0C) ? result :
                       (address == 6'h10) ? {31'b0, busy} :
                       32'h0;
 
-    assign data_ready = 1;
-    assign uo_out = 0;
-    assign user_interrupt = 0;
+    assign data_ready       = ready;
+
+    assign uo_out           = 0;
+    assign user_interrupt   = 0;
+
+    // Prevent unused warnings
     wire _unused = &{ui_in, data_read_n};
 
 endmodule
