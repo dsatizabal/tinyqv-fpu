@@ -18,14 +18,14 @@ module tqvp_dsatizabal_fpu (
 );
 
     // === Memory-mapped Registers ===
-    reg [31:0] operand_a;
-    reg [31:0] operand_b;
+    reg [15:0] operand_a;
+    reg [15:0] operand_b;
     reg [2:0]  operation;
 
     reg        busy;
     reg        valid_in;
 
-    reg [31:0] result;
+    reg [15:0] result;
     reg        ready;
 
     // === FSM States ===
@@ -52,32 +52,32 @@ module tqvp_dsatizabal_fpu (
     } fpu_operations_t;
 
     // === Muxed B for subtract
-    wire [31:0] b_muxed = (operation == SUB) ? {operand_b[31:16], ~operand_b[15], operand_b[14:0]} : operand_b;
+    wire [15:0] b_muxed = (operation == SUB) ? {~operand_b[15], operand_b[14:0]} : operand_b;
 
     // === Pipelined Adder ===
-    wire [31:0] add_result;
+    wire [15:0] add_result;
     wire        add_valid_out;
 
     fpu_add_pipelined add_inst (
         .clk(clk),
         .rst_n(rst_n),
         .valid_in(valid_in && (operation == ADD || operation == SUB) && (state == OPERANDS_READY)),
-        .a({16'b0, operand_a[15:0]}),
-        .b({16'b0, b_muxed[15:0]}),
+        .a(operand_a),
+        .b(b_muxed),
         .valid_out(add_valid_out),
         .result(add_result)
     );
 
     // === Pipelined Multiplier ===
-    wire [31:0] mul_result;
+    wire [15:0] mul_result;
     wire        mul_valid_out;
 
     fpu_mult_pipelined mul_inst (
         .clk(clk),
         .rst_n(rst_n),
         .valid_in(valid_in && (operation == MULT) && (state == OPERANDS_READY)),
-        .a({16'b0, operand_a[15:0]}),
-        .b({16'b0, operand_b[15:0]}),
+        .a(operand_a[15:0]),
+        .b(operand_b[15:0]),
         .valid_out(mul_valid_out),
         .result(mul_result)
     );
@@ -140,8 +140,8 @@ module tqvp_dsatizabal_fpu (
 
     // === Read Logic ===
     // === Read Logic ===
-    assign data_out = (address == 6'h00) ? operand_a :
-                      (address == 6'h04) ? operand_b :
+    assign data_out = (address == 6'h00) ? { 16'b0, operand_a } :
+                      (address == 6'h04) ? { 16'b0, operand_b } :
                       (address == 6'h08) ? {29'b0, operation} : // TODO: do I need to add control signals?
                       (address == 6'h0C) ? result :
                       (address == 6'h10) ? {31'b0, busy} :

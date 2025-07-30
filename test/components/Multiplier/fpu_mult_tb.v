@@ -6,10 +6,10 @@ module fpu_mult_tb;
     reg         clk;
     reg         rst_n;
     reg         valid_in;
-    reg  [31:0] a;
-    reg  [31:0] b;
+    reg  [15:0] a;
+    reg  [15:0] b;
     wire        valid_out;
-    wire [31:0] result;
+    wire [15:0] result;
 
     // Instantiate the pipelined multiplier
     fpu_mult_pipelined uut (

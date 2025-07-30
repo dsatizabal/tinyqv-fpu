@@ -5,10 +5,10 @@ module fpu_mult_pipelined (
     input  wire        clk,
     input  wire        rst_n,
     input  wire        valid_in,
-    input  wire [31:0] a,
-    input  wire [31:0] b,
+    input  wire [15:0] a,
+    input  wire [15:0] b,
     output reg         valid_out,
-    output reg  [31:0] result
+    output reg  [15:0] result
 );
 
     // State definitions
@@ -50,8 +50,8 @@ module fpu_mult_pipelined (
                 IDLE: begin
                     valid_out <= 1'b0;
                     if (valid_in) begin
-                        reg_a <= a[15:0];
-                        reg_b <= b[15:0];
+                        reg_a <= a;
+                        reg_b <= b;
                         state <= DECODE;
                     end
                 end
@@ -107,14 +107,14 @@ module fpu_mult_pipelined (
                     valid_out <= 1'b1;
 
                     if (is_nan) begin
-                        result <= {16'b0, 16'h7E00}; // Quiet NaN
+                        result <= {16'h7E00}; // Quiet NaN
                     end else if (is_inf_a | is_inf_b) begin
-                        result <= {16'b0, {result_sign, 5'b11111, 10'b0}}; // Infinity
+                        result <= {{result_sign, 5'b11111, 10'b0}}; // Infinity
                     end else if (is_zero_a | is_zero_b) begin
-                        result <= {16'b0, {result_sign, 15'b0}}; // Zero
+                        result <= {{result_sign, 15'b0}}; // Zero
                     end else begin
                         // Normal/denormal result
-                        result <= {16'b0, {result_sign, norm_exp, norm_mant}};
+                        result <= {{result_sign, norm_exp, norm_mant}};
                     end
 
                     state <= IDLE;

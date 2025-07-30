@@ -4,10 +4,10 @@
 module fpu_add_pipelined (
     input wire clk,
     input wire rst_n,
-    input wire [31:0] a,
-    input wire [31:0] b,
+    input wire [15:0] a,
+    input wire [15:0] b,
     input wire valid_in,
-    output reg [31:0] result,
+    output reg [15:0] result,
     output reg valid_out
 );
 
@@ -49,8 +49,8 @@ module fpu_add_pipelined (
                 IDLE: begin
                     valid_out <= 0;
                     if (valid_in) begin
-                        reg_a <= a[15:0];
-                        reg_b <= b[15:0];
+                        reg_a <= a;
+                        reg_b <= b;
                         state <= DECODE;
                     end
                 end
@@ -135,16 +135,16 @@ module fpu_add_pipelined (
                 PACK: begin
                     valid_out <= 1;
                     if (is_nan_a || is_nan_b || is_conflicting_inf) begin
-                        result <= {16'b0, 1'b0, 5'b11111, 10'b1}; // NaN
+                        result <= {1'b0, 5'b11111, 10'b1}; // NaN
                     end else if (is_inf_a && is_inf_b && sign_a == sign_b) begin
-                        result <= {16'b0, sign_a, 5'b11111, 10'b0}; // Infinity with same sign
+                        result <= {sign_a, 5'b11111, 10'b0}; // Infinity with same sign
                     end else if (is_inf_a) begin
-                        result <= {16'b0, sign_a, 5'b11111, 10'b0}; // A is infinity
+                        result <= {sign_a, 5'b11111, 10'b0}; // A is infinity
                     end else if (is_inf_b) begin
-                        result <= {16'b0, sign_b, 5'b11111, 10'b0}; // B is infinity
+                        result <= {sign_b, 5'b11111, 10'b0}; // B is infinity
                     end else begin
                         // Pack normal/denormal result
-                        result <= {16'b0, result_sign, norm_exp, norm_frac[9:0]};
+                        result <= {result_sign, norm_exp, norm_frac[9:0]};
                     end
                     state <= IDLE;
                 end
