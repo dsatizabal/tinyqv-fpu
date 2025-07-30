@@ -39,8 +39,6 @@ module fpu_add_pipelined (
 
     reg is_conflicting_inf;
 
-    integer i;
-
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             state <= IDLE;
@@ -91,7 +89,7 @@ module fpu_add_pipelined (
 
                 CALCULATE: begin
                     if (sign_a == sign_b) begin
-                        // Same sign: add magnitudes
+                        // Same signs: add magnitudes
                         sum <= {1'b0, aligned_a} + {1'b0, aligned_b};
                         result_sign <= sign_a;
                     end else begin
@@ -99,9 +97,13 @@ module fpu_add_pipelined (
                         if (aligned_a > aligned_b) begin
                             sum <= {1'b0, aligned_a} - {1'b0, aligned_b};
                             result_sign <= sign_a;
-                        end else begin
+                        end else if (aligned_b > aligned_a) begin
                             sum <= {1'b0, aligned_b} - {1'b0, aligned_a};
                             result_sign <= sign_b;
+                        end else begin
+                            // Equal magnitudes: result is zero
+                            sum <= 0;
+                            result_sign <= 0;
                         end
                     end
                     norm_exp <= exp_max;
@@ -110,26 +112,20 @@ module fpu_add_pipelined (
 
                 NORMALIZE: begin
                     if (sum == 0) begin
-                        // Zero result
                         norm_frac <= 0;
                         norm_exp <= 0;
                         result_sign <= 0;
                     end else begin
-                        // Normalize the result
                         if (sum[11]) begin
-                            // Result overflowed (sum > 1.0)
+                            // Overflow case - shift right by 1
                             norm_frac <= sum[11:1];
-                            norm_exp <= exp_max + 1;
+                            norm_exp <= norm_exp + 1;
                         end else begin
-                            // Normalize by shifting left until MSB is 1
-                            norm_frac = sum[10:0];
-                            norm_exp = exp_max;
-                            
-                            for (i = 0; i < 11; i = i + 1) begin
-                                if (!norm_frac[10] && norm_exp != 0) begin
-                                    norm_frac <= norm_frac << 1;
-                                    norm_exp <= norm_exp - 1;
-                                end
+                            // Normal case - shift left until MSB is 1
+                            norm_frac <= sum[10:0];
+                            if (!sum[10]) begin
+                                norm_frac <= sum[9:0] << 1;
+                                norm_exp <= norm_exp - 1;
                             end
                         end
                     end
@@ -155,5 +151,4 @@ module fpu_add_pipelined (
             endcase
         end
     end
-
 endmodule
