@@ -21,9 +21,14 @@ async def apply_and_wait(dut, a_float, b_float):
     await RisingEdge(dut.clk)
     dut.valid_in.value = 0
 
+    counter = 0
+
     # Wait for valid_out
     while dut.valid_out.value != 1:
         await RisingEdge(dut.clk)
+        counter += 1
+        if counter > 50:  # Timeout after 1000 cycles
+            raise TimeoutError("FPU did not produce output in time")
 
     raw_result = int(dut.result.value) & 0xFFFF
     return half_bin_to_float(raw_result)
@@ -38,12 +43,14 @@ async def test_fpu_add_normal(dut):
     await RisingEdge(dut.clk)
 
     tests = [
+        (0.0, 0.0),
+        (1.0, 1.0),
+        (0.01, 0.01),
+        (100.0, 0.01),
         (3.5, 1.25),
         (1.0, 2.0),
         (0.5, 0.25),
-        (100.0, 200.0),
-        (0.0, 0.0),
-        (100.0, 0.01)
+        (100.0, 200.0)
     ]
     for a, b in tests:
         actual = await apply_and_wait(dut, a, b)

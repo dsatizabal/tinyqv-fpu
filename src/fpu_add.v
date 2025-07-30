@@ -11,192 +11,148 @@ module fpu_add_pipelined (
     output reg valid_out
 );
 
-    // Stage 1
-    reg [15:0] s1_a, s1_b;
-    reg        s1_sign_a, s1_sign_b;
-    reg [4:0]  s1_exp_a, s1_exp_b;
-    reg [10:0] s1_frac_a, s1_frac_b;
-    reg        s1_is_nan_a, s1_is_nan_b;
-    reg        s1_is_inf_a, s1_is_inf_b;
-    reg        s1_valid;
+    localparam IDLE       = 3'd0;
+    localparam DECODE     = 3'd1;
+    localparam ALIGN      = 3'd2;
+    localparam CALCULATE  = 3'd3;
+    localparam NORMALIZE  = 3'd4;
+    localparam PACK       = 3'd5;
 
-    // Stage 2
-    reg [10:0] s2_frac_a, s2_frac_b;
-    reg [4:0]  s2_exp_a, s2_exp_b;
-    reg        s2_sign_a, s2_sign_b;
-    reg        s2_valid;
-    reg        s2_is_nan_a, s2_is_nan_b;
-    reg        s2_is_inf_a, s2_is_inf_b;
-    reg        s2_is_conflicting_inf;
-    reg [15:0] s2_nan_result;
+    reg [2:0] state;
 
-    // Stage 3
-    reg [11:0] s3_sum;
-    reg [4:0]  s3_exp;
-    reg        s3_result_sign;
-    reg        s3_valid;
-    reg [15:0] s3_nan_result;
-    reg        s3_is_nan;
-    reg        s3_is_conflicting_inf;
-    reg        s3_is_inf_a, s3_is_inf_b;
-    reg        s3_sign_a, s3_sign_b;
+    reg [15:0] reg_a, reg_b;
 
-    // Stage 4
-    reg [10:0] s4_frac;
-    reg [4:0]  s4_exp;
-    reg        s4_result_sign;
-    reg        s4_valid;
-    reg [15:0] s4_nan_result;
-    reg        s4_is_nan;
-    reg        s4_is_conflicting_inf;
-    reg        s4_is_inf_a, s4_is_inf_b;
-    reg        s4_sign_a, s4_sign_b;
+    reg sign_a, sign_b;
+    reg [4:0] exp_a, exp_b, exp_max;
+    reg [10:0] frac_a, frac_b;
+    reg is_nan_a, is_nan_b;
+    reg is_inf_a, is_inf_b;
 
-    // Pipeline stage 1
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            s1_valid <= 0;
-        end else begin
-            s1_a <= a[15:0];
-            s1_b <= b[15:0];
-            s1_sign_a <= a[15];
-            s1_sign_b <= b[15];
-            s1_exp_a <= a[14:10];
-            s1_exp_b <= b[14:10];
-            s1_frac_a <= {1'b1, a[9:0]};
-            s1_frac_b <= {1'b1, b[9:0]};
-            s1_is_nan_a <= (&a[14:10]) && (|a[9:0]);
-            s1_is_nan_b <= (&b[14:10]) && (|b[9:0]);
-            s1_is_inf_a <= (&a[14:10]) && !(|a[9:0]);
-            s1_is_inf_b <= (&b[14:10]) && !(|b[9:0]);
-            s1_valid <= valid_in;
-        end
-    end
+    reg [10:0] aligned_a, aligned_b;
+    reg [4:0] shift_amt;
 
-    // Pipeline stage 2
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            s2_valid <= 0;
-        end else begin
-            s2_valid <= s1_valid;
-            s2_sign_a <= s1_sign_a;
-            s2_sign_b <= s1_sign_b;
-            s2_exp_a <= s1_exp_a;
-            s2_exp_b <= s1_exp_b;
-            s2_is_nan_a <= s1_is_nan_a;
-            s2_is_nan_b <= s1_is_nan_b;
-            s2_is_inf_a <= s1_is_inf_a;
-            s2_is_inf_b <= s1_is_inf_b;
-            s2_is_conflicting_inf <= s1_is_inf_a && s1_is_inf_b && (s1_sign_a != s1_sign_b);
-            s2_nan_result <= {1'b0, 5'b11111, 10'b1};  // default NaN
+    reg [11:0] sum;
+    reg result_sign;
 
-            if (s1_exp_a > s1_exp_b) begin
-                s2_exp_a <= s1_exp_a;
-                s2_exp_b <= s1_exp_a;
-                s2_frac_a <= s1_frac_a;
-                s2_frac_b <= s1_frac_b >> (s1_exp_a - s1_exp_b);
-            end else begin
-                s2_exp_a <= s1_exp_b;
-                s2_exp_b <= s1_exp_b;
-                s2_frac_a <= s1_frac_a >> (s1_exp_b - s1_exp_a);
-                s2_frac_b <= s1_frac_b;
-            end
-        end
-    end
+    reg [10:0] norm_frac;
+    reg [4:0] norm_exp;
 
-    // Pipeline stage 3
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            s3_valid <= 0;
-        end else begin
-            s3_valid <= s2_valid;
-            s3_nan_result <= s2_nan_result;
-            s3_is_nan <= s2_is_nan_a || s2_is_nan_b;
-            s3_is_conflicting_inf <= s2_is_conflicting_inf;
-            s3_is_inf_a <= s2_is_inf_a;
-            s3_is_inf_b <= s2_is_inf_b;
-            s3_sign_a <= s2_sign_a;
-            s3_sign_b <= s2_sign_b;
+    reg is_conflicting_inf;
 
-            if (s2_sign_a == s2_sign_b) begin
-                s3_sum <= s2_frac_a + s2_frac_b;
-                s3_result_sign <= s2_sign_a;
-            end else if (s2_frac_a >= s2_frac_b) begin
-                s3_sum <= s2_frac_a - s2_frac_b;
-                s3_result_sign <= s2_sign_a;
-            end else begin
-                s3_sum <= s2_frac_b - s2_frac_a;
-                s3_result_sign <= s2_sign_b;
-            end
-
-            s3_exp <= s2_exp_a;
-        end
-    end
-
-    // Pipeline stage 4
     integer i;
-    reg [4:0]  temp_exp;
-    reg [10:0] temp_frac;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            s4_valid <= 0;
-        end else begin
-            s4_valid <= s3_valid;
-            s4_nan_result <= s3_nan_result;
-            s4_is_nan <= s3_is_nan;
-            s4_is_conflicting_inf <= s3_is_conflicting_inf;
-            s4_is_inf_a <= s3_is_inf_a;
-            s4_is_inf_b <= s3_is_inf_b;
-            s4_sign_a <= s3_sign_a;
-            s4_sign_b <= s3_sign_b;
-
-            if (s3_sum == 0) begin
-                s4_exp         <= 0;
-                s4_frac        <= 0;
-                s4_result_sign <= 0;
-            end else if (s3_sum[11]) begin
-                s4_frac        <= s3_sum[11:1];
-                s4_exp         <= s3_exp + 1;
-                s4_result_sign <= s3_result_sign;
-            end else begin
-                temp_frac = s3_sum[10:0];
-                temp_exp  = s3_exp;
-                s4_result_sign <= s3_result_sign;
-
-                for (i = 10; i >= 0; i = i - 1) begin
-                    if (temp_frac[10]) begin
-                        i = -1;
-                    end else begin
-                        temp_frac = temp_frac << 1;
-                        temp_exp  = temp_exp - 1;
-                    end
-                end
-
-                s4_frac <= temp_frac;
-                s4_exp  <= temp_exp;
-            end
-        end
-    end
-
-    // Pipeline stage 5 (final output)
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
+            state <= IDLE;
             valid_out <= 0;
             result <= 0;
         end else begin
-            valid_out <= s4_valid;
-            if (s4_is_nan || s4_is_conflicting_inf) begin
-                result <= {16'b0, s4_nan_result};
-            end else if (s4_is_inf_a && s4_is_inf_b && s4_sign_a == s4_sign_b) begin
-                result <= {16'b0, {s4_sign_a, 5'b11111, 10'b0}};
-            end else if (s4_is_inf_a && !s4_is_inf_b) begin
-                result <= {16'b0, {s4_sign_a, 5'b11111, 10'b0}};
-            end else if (!s4_is_inf_a && s4_is_inf_b) begin
-                result <= {16'b0, {s4_sign_b, 5'b11111, 10'b0}};
-            end else begin
-                result <= {16'b0, {s4_result_sign, s4_exp, s4_frac[9:0]}};
-            end
+            case (state)
+                IDLE: begin
+                    valid_out <= 0;
+                    if (valid_in) begin
+                        reg_a <= a[15:0];
+                        reg_b <= b[15:0];
+                        state <= DECODE;
+                    end
+                end
+
+                DECODE: begin
+                    sign_a <= reg_a[15];
+                    exp_a <= reg_a[14:10];
+                    frac_a <= (reg_a[14:10] != 0) ? {1'b1, reg_a[9:0]} : {1'b0, reg_a[9:0]};
+                    is_nan_a <= (&reg_a[14:10]) && (|reg_a[9:0]);
+                    is_inf_a <= (&reg_a[14:10]) && !(|reg_a[9:0]);
+
+                    sign_b <= reg_b[15];
+                    exp_b <= reg_b[14:10];
+                    frac_b <= (reg_b[14:10] != 0) ? {1'b1, reg_b[9:0]} : {1'b0, reg_b[9:0]};
+                    is_nan_b <= (&reg_b[14:10]) && (|reg_b[9:0]);
+                    is_inf_b <= (&reg_b[14:10]) && !(|reg_b[9:0]);
+
+                    state <= ALIGN;
+                end
+
+                ALIGN: begin
+                    is_conflicting_inf <= is_inf_a && is_inf_b && (sign_a != sign_b);
+                    if (exp_a > exp_b) begin
+                        shift_amt <= exp_a - exp_b;
+                        exp_max <= exp_a;
+                        aligned_a <= frac_a;
+                        aligned_b <= frac_b >> (exp_a - exp_b);
+                    end else begin
+                        shift_amt <= exp_b - exp_a;
+                        exp_max <= exp_b;
+                        aligned_a <= frac_a >> (exp_b - exp_a);
+                        aligned_b <= frac_b;
+                    end
+                    state <= CALCULATE;
+                end
+
+                CALCULATE: begin
+                    if (sign_a == sign_b) begin
+                        // Same sign: add magnitudes
+                        sum <= {1'b0, aligned_a} + {1'b0, aligned_b};
+                        result_sign <= sign_a;
+                    end else begin
+                        // Different signs: subtract smaller from larger
+                        if (aligned_a > aligned_b) begin
+                            sum <= {1'b0, aligned_a} - {1'b0, aligned_b};
+                            result_sign <= sign_a;
+                        end else begin
+                            sum <= {1'b0, aligned_b} - {1'b0, aligned_a};
+                            result_sign <= sign_b;
+                        end
+                    end
+                    norm_exp <= exp_max;
+                    state <= NORMALIZE;
+                end
+
+                NORMALIZE: begin
+                    if (sum == 0) begin
+                        // Zero result
+                        norm_frac <= 0;
+                        norm_exp <= 0;
+                        result_sign <= 0;
+                    end else begin
+                        // Normalize the result
+                        if (sum[11]) begin
+                            // Result overflowed (sum > 1.0)
+                            norm_frac <= sum[11:1];
+                            norm_exp <= exp_max + 1;
+                        end else begin
+                            // Normalize by shifting left until MSB is 1
+                            norm_frac = sum[10:0];
+                            norm_exp = exp_max;
+                            
+                            for (i = 0; i < 11; i = i + 1) begin
+                                if (!norm_frac[10] && norm_exp != 0) begin
+                                    norm_frac <= norm_frac << 1;
+                                    norm_exp <= norm_exp - 1;
+                                end
+                            end
+                        end
+                    end
+                    state <= PACK;
+                end
+
+                PACK: begin
+                    valid_out <= 1;
+                    if (is_nan_a || is_nan_b || is_conflicting_inf) begin
+                        result <= {16'b0, 1'b0, 5'b11111, 10'b1}; // NaN
+                    end else if (is_inf_a && is_inf_b && sign_a == sign_b) begin
+                        result <= {16'b0, sign_a, 5'b11111, 10'b0}; // Infinity with same sign
+                    end else if (is_inf_a) begin
+                        result <= {16'b0, sign_a, 5'b11111, 10'b0}; // A is infinity
+                    end else if (is_inf_b) begin
+                        result <= {16'b0, sign_b, 5'b11111, 10'b0}; // B is infinity
+                    end else begin
+                        // Pack normal/denormal result
+                        result <= {16'b0, result_sign, norm_exp, norm_frac[9:0]};
+                    end
+                    state <= IDLE;
+                end
+            endcase
         end
     end
 
