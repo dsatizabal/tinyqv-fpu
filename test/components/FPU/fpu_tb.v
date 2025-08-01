@@ -15,8 +15,6 @@ module fpu_tb;
     wire        data_ready;
     wire        user_interrupt;
 
-    always #5 clk = ~clk; // 100 MHz clock
-
     tqvp_dsatizabal_fpu dut (
         .clk(clk),
         .rst_n(rst_n),

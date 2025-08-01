@@ -1,148 +1,147 @@
-/*
- * IEEE 754 Floating Point Adder/Subtractor (Single-Precision)
- * 3-stage pipelined version with special case handling
- * Author: Diego Satizabal, 2025
- */
-
+`timescale 1ns / 1ps
 `default_nettype none
 
-module fpu_add_pipelined (
-    input  wire        clk,
-    input  wire        rst_n,
-    input  wire        valid_in,
-    input  wire [31:0] a,
-    input  wire [31:0] b,
-    output reg         valid_out,
-    output reg  [31:0] result
+module fpu_adder (
+    input wire clk,
+    input wire rst_n,
+    input wire [15:0] a,
+    input wire [15:0] b,
+    input wire valid_in,
+    output reg [15:0] result,
+    output reg valid_out
 );
 
-    // Stage 1: Unpack and align
-    reg        s1_valid;
-    reg        s1_sign_a, s1_sign_b;
-    reg [7:0]  s1_exp_a, s1_exp_b, s1_exp_large, s1_exp_diff;
-    reg [23:0] s1_frac_a, s1_frac_b;
-    reg        s1_signed_op;
-    reg        s1_is_nan_a, s1_is_nan_b;
-    reg        s1_is_inf_a, s1_is_inf_b;
-    reg [31:0] s1_nan_result;
+    localparam IDLE       = 3'd0;
+    localparam DECODE     = 3'd1;
+    localparam ALIGN      = 3'd2;
+    localparam CALCULATE  = 3'd3;
+    localparam NORMALIZE  = 3'd4;
+    localparam PACK       = 3'd5;
+
+    reg [2:0] state;
+
+    reg [15:0] reg_a, reg_b;
+
+    reg sign_a, sign_b;
+    reg [4:0] exp_max;
+    reg [10:0] frac_a, frac_b;
+    reg is_nan_a, is_nan_b;
+    reg is_inf_a, is_inf_b;
+
+    reg [10:0] aligned_a, aligned_b;
+
+    reg [11:0] sum;
+    reg result_sign;
+
+    reg [10:0] norm_frac;
+
+    reg is_conflicting_inf;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            s1_valid <= 1'b0;
+            state <= IDLE;
+            valid_out <= 0;
+            result <= 0;
         end else begin
-            s1_valid    <= valid_in;
-            s1_sign_a   <= a[31];
-            s1_sign_b   <= b[31];
-            s1_exp_a    <= a[30:23];
-            s1_exp_b    <= b[30:23];
-            s1_frac_a   <= (a[30:23] == 8'b0) ? {1'b0, a[22:0]} : {1'b1, a[22:0]};
-            s1_frac_b   <= (b[30:23] == 8'b0) ? {1'b0, b[22:0]} : {1'b1, b[22:0]};
-            s1_exp_diff <= (a[30:23] > b[30:23]) ? (a[30:23] - b[30:23]) : (b[30:23] - a[30:23]);
-            s1_exp_large<= (a[30:23] > b[30:23]) ? a[30:23] : b[30:23];
-            s1_signed_op<= (a[31] != b[31]);
-
-            s1_is_nan_a   <= (a[30:23] == 8'hFF) && (a[22:0] != 0);
-            s1_is_nan_b   <= (b[30:23] == 8'hFF) && (b[22:0] != 0);
-            s1_is_inf_a   <= (a[30:23] == 8'hFF) && (a[22:0] == 0);
-            s1_is_inf_b   <= (b[30:23] == 8'hFF) && (b[22:0] == 0);
-            s1_nan_result <= 32'h7FC00000; // quiet NaN
-        end
-    end
-
-    // Stage 2: Add/Subtract
-    reg        s2_valid;
-    reg        s2_result_sign;
-    reg [7:0]  s2_exp_large;
-    reg [24:0] s2_sum;
-    reg        s2_is_nan;
-    reg        s2_is_conflicting_inf;
-    reg        s2_is_inf_a, s2_is_inf_b;
-    reg        s2_sign_a, s2_sign_b;
-    reg [31:0] s2_nan_result;
-    reg [23:0] aligned_a, aligned_b;
-
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            s2_valid <= 1'b0;
-        end else begin
-            s2_valid     <= s1_valid;
-            s2_exp_large <= s1_exp_large;
-            s2_is_nan    <= s1_is_nan_a | s1_is_nan_b;
-            s2_is_conflicting_inf <= s1_is_inf_a & s1_is_inf_b & (s1_sign_a != s1_sign_b);
-            s2_is_inf_a  <= s1_is_inf_a;
-            s2_is_inf_b  <= s1_is_inf_b;
-            s2_sign_a    <= s1_sign_a;
-            s2_sign_b    <= s1_sign_b;
-            s2_nan_result<= s1_nan_result;
-
-            // Align
-            aligned_a = (s1_exp_a > s1_exp_b) ? s1_frac_a : (s1_frac_a >> s1_exp_diff);
-            aligned_b = (s1_exp_b > s1_exp_a) ? s1_frac_b : (s1_frac_b >> s1_exp_diff);
-
-            if (s1_signed_op) begin
-                if (aligned_a >= aligned_b) begin
-                    s2_sum <= aligned_a - aligned_b;
-                    s2_result_sign <= s1_sign_a;
-                end else begin
-                    s2_sum <= aligned_b - aligned_a;
-                    s2_result_sign <= s1_sign_b;
+            case (state)
+                IDLE: begin
+                    valid_out <= 0;
+                    if (valid_in) begin
+                        reg_a <= a;
+                        reg_b <= b;
+                        state <= DECODE;
+                    end
                 end
-            end else begin
-                s2_sum <= aligned_a + aligned_b;
-                s2_result_sign <= s1_sign_a;
-            end
-        end
-    end
 
-    // Stage 3: Normalize and pack
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            result     <= 32'b0;
-            valid_out  <= 1'b0;
-        end else begin
-            valid_out <= s2_valid;
+                DECODE: begin
+                    sign_a <= reg_a[15];
+                    frac_a <= (reg_a[14:10] != 0) ? {1'b1, reg_a[9:0]} : {1'b0, reg_a[9:0]};
+                    is_nan_a <= (&reg_a[14:10]) && (|reg_a[9:0]);
+                    is_inf_a <= (&reg_a[14:10]) && !(|reg_a[9:0]);
 
-            if (s2_valid) begin
-                if (s2_is_nan || s2_is_conflicting_inf) begin
-                    result <= s2_nan_result;
-                end else if (s2_is_inf_a) begin
-                    result <= {s2_sign_a, 8'hFF, 23'b0};
-                end else if (s2_is_inf_b) begin
-                    result <= {s2_sign_b, 8'hFF, 23'b0};
-                end else if (s2_sum == 0) begin
-                    result <= 32'b0;
-                end else begin
-                    reg [7:0]  exp;
-                    reg [23:0] frac;
-                    reg [4:0]  shift;
+                    sign_b <= reg_b[15];
+                    frac_b <= (reg_b[14:10] != 0) ? {1'b1, reg_b[9:0]} : {1'b0, reg_b[9:0]};
+                    is_nan_b <= (&reg_b[14:10]) && (|reg_b[9:0]);
+                    is_inf_b <= (&reg_b[14:10]) && !(|reg_b[9:0]);
 
-                    exp = s2_exp_large;
-                    frac = s2_sum[23:0];
-                    shift = 0;
+                    state <= ALIGN;
+                end
 
-                    // Normalize
-                    if (s2_sum[24]) begin
-                        frac = s2_sum[24:1];
-                        exp = exp + 1;
+                ALIGN: begin
+                    is_conflicting_inf <= is_inf_a && is_inf_b && (sign_a != sign_b);
+                    if (reg_a[14:10] > reg_b[14:10]) begin
+                        exp_max <= reg_a[14:10];
+                        aligned_a <= frac_a;
+                        aligned_b <= frac_b >> (reg_a[14:10] - reg_b[14:10]);
                     end else begin
-                        // Bounded loop version (Yosys friendly)
-                        integer i;
-                        for (i = 0; i < 24; i = i + 1) begin
-                            if (frac[23] == 0 && exp > 0) begin
-                                frac = frac << 1;
-                                exp = exp - 1;
-                                shift = shift + 1;
-                            end else begin
-                                // Exit normalization when leading 1 is found
-                                i = 24; // effectively break
+                        exp_max <= reg_b[14:10];
+                        aligned_a <= frac_a >> (reg_b[14:10] - reg_a[14:10]);
+                        aligned_b <= frac_b;
+                    end
+                    state <= CALCULATE;
+                end
+
+                CALCULATE: begin
+                    if (sign_a == sign_b) begin
+                        // Same signs: add magnitudes
+                        sum <= {1'b0, aligned_a} + {1'b0, aligned_b};
+                        result_sign <= sign_a;
+                    end else begin
+                        // Different signs: subtract smaller from larger
+                        if (aligned_a > aligned_b) begin
+                            sum <= {1'b0, aligned_a} - {1'b0, aligned_b};
+                            result_sign <= sign_a;
+                        end else if (aligned_b > aligned_a) begin
+                            sum <= {1'b0, aligned_b} - {1'b0, aligned_a};
+                            result_sign <= sign_b;
+                        end else begin
+                            // Equal magnitudes: result is zero
+                            sum <= 0;
+                            result_sign <= 0;
+                        end
+                    end
+                    state <= NORMALIZE;
+                end
+
+                NORMALIZE: begin
+                    if (sum == 0) begin
+                        norm_frac <= 0;
+                        exp_max <= 0;
+                        result_sign <= 0;
+                    end else begin
+                        if (sum[11]) begin
+                            // Overflow case - shift right by 1
+                            norm_frac <= sum[11:1];
+                            exp_max <= exp_max + 1;
+                        end else begin
+                            // Normal case - shift left until MSB is 1
+                            norm_frac <= sum[10:0];
+                            if (!sum[10]) begin
+                                norm_frac <= sum[9:0] << 1;
+                                exp_max <= exp_max - 1;
                             end
                         end
                     end
-
-                    result <= {s2_result_sign, exp, frac[22:0]};
+                    state <= PACK;
                 end
-            end
+
+                PACK: begin
+                    valid_out <= 1;
+                    if (is_nan_a || is_nan_b || is_conflicting_inf) begin
+                        result <= {1'b0, 5'b11111, 10'b1}; // NaN
+                    end else if (is_inf_a && is_inf_b && sign_a == sign_b) begin
+                        result <= {sign_a, 5'b11111, 10'b0}; // Infinity with same sign
+                    end else if (is_inf_a) begin
+                        result <= {sign_a, 5'b11111, 10'b0}; // A is infinity
+                    end else if (is_inf_b) begin
+                        result <= {sign_b, 5'b11111, 10'b0}; // B is infinity
+                    end else begin
+                        // Pack normal/denormal result
+                        result <= {result_sign, exp_max, norm_frac[9:0]};
+                    end
+                    state <= IDLE;
+                end
+            endcase
         end
     end
-
 endmodule

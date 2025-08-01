@@ -1,33 +1,37 @@
 import cocotb
-from cocotb.triggers import RisingEdge, Timer
+from cocotb.triggers import RisingEdge
 from cocotb.clock import Clock
 import struct
 import math
+import numpy as np
 
+def float_to_half_bin(f):
+    return struct.unpack('>H', struct.pack('>e', f))[0]
 
-def float_to_hex(f):
-    return struct.unpack('>I', struct.pack('>f', f))[0]
+def half_bin_to_float(h):
+    return struct.unpack('>e', struct.pack('>H', h & 0xFFFF))[0]
 
-
-def hex_to_float(h):
-    return struct.unpack('>f', struct.pack('>I', h))[0]
-
-
-async def apply_and_wait(dut, a, b):
-    dut.a.value = float_to_hex(a)
-    dut.b.value = float_to_hex(b)
+async def apply_and_wait(dut, a_float, b_float):
+    a_bin = float_to_half_bin(a_float)
+    b_bin = float_to_half_bin(b_float)
+    dut.a.value = a_bin  # lower 16 bits
+    dut.b.value = b_bin
     dut.valid_in.value = 1
 
-    await RisingEdge(dut.clk)  # Apply inputs
+    await RisingEdge(dut.clk)
     dut.valid_in.value = 0
+
+    counter = 0
 
     # Wait for valid_out
     while dut.valid_out.value != 1:
         await RisingEdge(dut.clk)
+        counter += 1
+        if counter > 50:  # Timeout after 1000 cycles
+            raise TimeoutError("FPU did not produce output in time")
 
-    actual = hex_to_float(int(dut.result.value))
-    return actual
-
+    raw_result = int(dut.result.value) & 0xFFFF
+    return half_bin_to_float(raw_result)
 
 @cocotb.test()
 async def test_fpu_add_normal(dut):
@@ -39,17 +43,20 @@ async def test_fpu_add_normal(dut):
     await RisingEdge(dut.clk)
 
     tests = [
-        (3.5, 1.25, 4.75),
-        (1.0, 2.0, 3.0),
-        (0.5, 0.25, 0.75),
-        (100.0, 200.0, 300.0),
-        (0.0, 0.0, 0.0)
+        (0.0, 0.0),
+        (1.0, 1.0),
+        (0.01, 0.01),
+        (100.0, 0.01),
+        (3.5, 1.25),
+        (1.0, 2.0),
+        (0.5, 0.25),
+        (100.0, 200.0)
     ]
-    for a, b, expected in tests:
+    for a, b in tests:
         actual = await apply_and_wait(dut, a, b)
-        assert abs(actual - expected) < 1e-5, f"FAIL: {a} + {b} = {actual}, expected {expected}"
+        expected = float(np.float16(a) + np.float16(b))
+        assert abs(actual - expected) < 1e-2, f"FAIL: {a} + {b} = {actual}, expected {expected}"
         dut._log.info(f"PASS: {a} + {b} = {actual}")
-
 
 @cocotb.test()
 async def test_fpu_add_with_signs(dut):
@@ -61,17 +68,20 @@ async def test_fpu_add_with_signs(dut):
     await RisingEdge(dut.clk)
 
     tests = [
-        (-1.0, -2.0, -3.0),
-        (5.0, -2.0, 3.0),
-        (-3.5, 1.25, -2.25),
-        (1.5, -1.5, 0.0),
-        (-1.5, 1.5, 0.0)
+        (-1.0, -2.0),
+        (5.0, -2.0),
+        (-3.5, 1.25),
+        (1.5, -1.5),
+        (-1.5, 1.5),
+        (100.00, 0.01),
+        (100.0, -100.0),
+        (-100.0, 100.0)
     ]
-    for a, b, expected in tests:
+    for a, b in tests:
         actual = await apply_and_wait(dut, a, b)
-        assert abs(actual - expected) < 1e-5, f"FAIL: {a} + {b} = {actual}, expected {expected}"
+        expected = float(np.float16(a) + np.float16(b))
+        assert abs(actual - expected) < 1e-2, f"FAIL: {a} + {b} = {actual}, expected {expected}"
         dut._log.info(f"PASS: {a} + {b} = {actual}")
-
 
 @cocotb.test()
 async def test_fpu_subtraction(dut):
@@ -83,17 +93,18 @@ async def test_fpu_subtraction(dut):
     await RisingEdge(dut.clk)
 
     tests = [
-        (5.0, 2.0, 3.0),
-        (2.0, 5.0, -3.0),
-        (-1.0, -1.0, 0.0),
-        (-2.5, -1.0, -1.5),
-        (3.5, 3.5, 0.0)
+        (5.0, 2.0),
+        (2.0, 5.0),
+        (-1.0, -1.0),
+        (-2.5, -1.0),
+        (3.5, 3.5),
+        (100, 0.01),
     ]
-    for a, b, expected in tests:
+    for a, b in tests:
         actual = await apply_and_wait(dut, a, -b)
-        assert abs(actual - expected) < 1e-5, f"FAIL: {a} - {b} = {actual}, expected {expected}"
+        expected = float(np.float16(a) - np.float16(b))
+        assert abs(actual - expected) < 1e-2, f"FAIL: {a} - {b} = {actual}, expected {expected}"
         dut._log.info(f"PASS: {a} - {b} = {actual}")
-
 
 @cocotb.test()
 async def test_fpu_edge_cases(dut):
@@ -128,6 +139,6 @@ async def test_fpu_edge_cases(dut):
             assert math.isinf(actual) and (math.copysign(1, actual) == math.copysign(1, expected)), \
                 f"FAIL: {a} + {b} = {actual}, expected {expected}"
         else:
-            assert abs(actual - expected) < 1e-5, f"FAIL: {a} + {b} = {actual}, expected {expected}"
+            assert abs(actual - expected) < 1e-2, f"FAIL: {a} + {b} = {actual}, expected {expected}"
 
         dut._log.info(f"PASS: {a} + {b} = {actual}")

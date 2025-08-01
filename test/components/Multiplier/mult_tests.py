@@ -1,14 +1,16 @@
 import cocotb
-from cocotb.triggers import Timer, RisingEdge, FallingEdge
+from cocotb.triggers import RisingEdge
 from cocotb.clock import Clock
-import struct
+import numpy as np
 import math
 
-def float_to_hex(f):
-    return struct.unpack('>I', struct.pack('>f', f))[0]
+def float_to_half_bits(f):
+    """Converts Python float to IEEE-754 half-precision bits (stored in lower 16 bits of 32-bit word)."""
+    return int(np.float16(f).view(np.uint16)) & 0xFFFF
 
-def hex_to_float(h):
-    return struct.unpack('>f', struct.pack('>I', h))[0]
+def half_bits_to_float(bits):
+    """Converts lower 16 bits of 32-bit word to Python float (half-precision)."""
+    return float(np.uint16(bits).view(np.float16))
 
 async def reset_dut(dut):
     dut.rst_n.value = 0
@@ -18,23 +20,24 @@ async def reset_dut(dut):
     dut.rst_n.value = 1
     await RisingEdge(dut.clk)
 
-async def apply_and_wait(dut, a, b):
-    # Apply inputs
-    dut.a.value = float_to_hex(a)
-    dut.b.value = float_to_hex(b)
+async def apply_and_wait(dut, a_float, b_float):
+    a_bits = float_to_half_bits(a_float)
+    b_bits = float_to_half_bits(b_float)
+
+    dut.a.value = a_bits  # packed in lower 16 bits
+    dut.b.value = b_bits
     dut.valid_in.value = 1
 
     await RisingEdge(dut.clk)
     dut.valid_in.value = 0
 
-    # Wait for valid_out signal
-    for _ in range(10):  # max 10 cycles wait
+    for _ in range(20):
         await RisingEdge(dut.clk)
-        if dut.valid_out.value.integer == 1:
+        if dut.valid_out.value:
             break
 
-    actual = hex_to_float(int(dut.result.value))
-    return actual
+    result_bits = int(dut.result.value) & 0xFFFF
+    return half_bits_to_float(result_bits)
 
 @cocotb.test()
 async def test_fpu_mul_normal(dut):
@@ -45,14 +48,13 @@ async def test_fpu_mul_normal(dut):
         (3.5, 1.25, 4.375),
         (2.0, 2.0, 4.0),
         (0.5, 0.5, 0.25),
-        (1.1, 2.2, 2.42),
         (1.0, 0.0001, 0.0001),
-        (100.0, 0.01, 1.0),
-        (33.33, 1.0, 33.330001)
+        (10.0, 0.1, 1.0),
+        (5.0, 5.0, 25.0)
     ]
     for a, b, expected in tests:
         actual = await apply_and_wait(dut, a, b)
-        assert abs(actual - expected) < 1e-5, f"FAIL: {a} * {b} = {actual}, expected {expected}"
+        assert abs(actual - expected) < 1e-2, f"FAIL: {a} * {b} = {actual}, expected {expected}"
         dut._log.info(f"PASS: {a} * {b} = {actual}")
 
 @cocotb.test()
@@ -70,7 +72,7 @@ async def test_fpu_mul_with_signs(dut):
     ]
     for a, b, expected in tests:
         actual = await apply_and_wait(dut, a, b)
-        assert abs(actual - expected) < 1e-5, f"FAIL: {a} * {b} = {actual}, expected {expected}"
+        assert abs(actual - expected) < 1e-2, f"FAIL: {a} * {b} = {actual}, expected {expected}"
         dut._log.info(f"PASS: {a} * {b} = {actual}")
 
 @cocotb.test()
@@ -102,5 +104,5 @@ async def test_fpu_mul_edge_cases(dut):
             assert math.isinf(actual) and (math.copysign(1, actual) == math.copysign(1, expected)), \
                 f"FAIL: {a} * {b} = {actual}, expected {expected}"
         else:
-            assert abs(actual - expected) < 1e-5, f"FAIL: {a} * {b} = {actual}, expected {expected}"
+            assert abs(actual - expected) < 1e-2, f"FAIL: {a} * {b} = {actual}, expected {expected}"
         dut._log.info(f"PASS: {a} * {b} = {actual}")
