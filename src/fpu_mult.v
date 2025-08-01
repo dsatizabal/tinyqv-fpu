@@ -25,7 +25,6 @@ module fpu_mult_pipelined (
 
     // Decoded values
     reg sign_a, sign_b;
-    reg [4:0] exp_a, exp_b;
     reg [9:0] mant_a, mant_b;
     reg [10:0] frac_a, frac_b;
     reg is_nan_a, is_nan_b;
@@ -38,7 +37,6 @@ module fpu_mult_pipelined (
     reg result_sign;
     reg is_nan;
     reg [9:0] norm_mant;
-    reg [4:0] norm_exp;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -59,7 +57,6 @@ module fpu_mult_pipelined (
                 DECODE: begin
                     // Decode input A
                     sign_a <= reg_a[15];
-                    exp_a <= reg_a[14:10];
                     mant_a <= reg_a[9:0];
                     frac_a <= (reg_a[14:10] == 5'b0) ? {1'b0, reg_a[9:0]} : {1'b1, reg_a[9:0]};
                     is_nan_a <= (reg_a[14:10] == 5'b11111) && (reg_a[9:0] != 0);
@@ -68,7 +65,6 @@ module fpu_mult_pipelined (
 
                     // Decode input B
                     sign_b <= reg_b[15];
-                    exp_b <= reg_b[14:10];
                     mant_b <= reg_b[9:0];
                     frac_b <= (reg_b[14:10] == 5'b0) ? {1'b0, reg_b[9:0]} : {1'b1, reg_b[9:0]};
                     is_nan_b <= (reg_b[14:10] == 5'b11111) && (reg_b[9:0] != 0);
@@ -81,7 +77,7 @@ module fpu_mult_pipelined (
                 MULTIPLY: begin
                     // Calculate product and exponent
                     product <= frac_a * frac_b;
-                    raw_exp <= exp_a + exp_b - 5'd15; // Subtract bias
+                    raw_exp <= reg_a[14:10] + reg_b[14:10] - 5'd15; // Subtract bias
                     result_sign <= sign_a ^ sign_b;
                     is_nan <= is_nan_a | is_nan_b | ((is_inf_a | is_inf_b) & (is_zero_a | is_zero_b));
 
@@ -93,11 +89,10 @@ module fpu_mult_pipelined (
                     if (product[21]) begin
                         // Product overflowed (bit 21 set)
                         norm_mant <= product[20:11];
-                        norm_exp <= raw_exp + 1;
+                        raw_exp <= raw_exp + 1;
                     end else begin
                         // Normal product
                         norm_mant <= product[19:10];
-                        norm_exp <= raw_exp;
                     end
 
                     state <= PACK;
@@ -114,7 +109,7 @@ module fpu_mult_pipelined (
                         result <= {{result_sign, 15'b0}}; // Zero
                     end else begin
                         // Normal/denormal result
-                        result <= {{result_sign, norm_exp, norm_mant}};
+                        result <= {{result_sign, raw_exp[4:0], norm_mant}};
                     end
 
                     state <= IDLE;

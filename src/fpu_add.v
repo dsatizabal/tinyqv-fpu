@@ -23,19 +23,17 @@ module fpu_add_pipelined (
     reg [15:0] reg_a, reg_b;
 
     reg sign_a, sign_b;
-    reg [4:0] exp_a, exp_b, exp_max;
+    reg [4:0] exp_max;
     reg [10:0] frac_a, frac_b;
     reg is_nan_a, is_nan_b;
     reg is_inf_a, is_inf_b;
 
     reg [10:0] aligned_a, aligned_b;
-    reg [4:0] shift_amt;
 
     reg [11:0] sum;
     reg result_sign;
 
     reg [10:0] norm_frac;
-    reg [4:0] norm_exp;
 
     reg is_conflicting_inf;
 
@@ -57,13 +55,11 @@ module fpu_add_pipelined (
 
                 DECODE: begin
                     sign_a <= reg_a[15];
-                    exp_a <= reg_a[14:10];
                     frac_a <= (reg_a[14:10] != 0) ? {1'b1, reg_a[9:0]} : {1'b0, reg_a[9:0]};
                     is_nan_a <= (&reg_a[14:10]) && (|reg_a[9:0]);
                     is_inf_a <= (&reg_a[14:10]) && !(|reg_a[9:0]);
 
                     sign_b <= reg_b[15];
-                    exp_b <= reg_b[14:10];
                     frac_b <= (reg_b[14:10] != 0) ? {1'b1, reg_b[9:0]} : {1'b0, reg_b[9:0]};
                     is_nan_b <= (&reg_b[14:10]) && (|reg_b[9:0]);
                     is_inf_b <= (&reg_b[14:10]) && !(|reg_b[9:0]);
@@ -73,15 +69,13 @@ module fpu_add_pipelined (
 
                 ALIGN: begin
                     is_conflicting_inf <= is_inf_a && is_inf_b && (sign_a != sign_b);
-                    if (exp_a > exp_b) begin
-                        shift_amt <= exp_a - exp_b;
-                        exp_max <= exp_a;
+                    if (reg_a[14:10] > reg_b[14:10]) begin
+                        exp_max <= reg_a[14:10];
                         aligned_a <= frac_a;
-                        aligned_b <= frac_b >> (exp_a - exp_b);
+                        aligned_b <= frac_b >> (reg_a[14:10] - reg_b[14:10]);
                     end else begin
-                        shift_amt <= exp_b - exp_a;
-                        exp_max <= exp_b;
-                        aligned_a <= frac_a >> (exp_b - exp_a);
+                        exp_max <= reg_b[14:10];
+                        aligned_a <= frac_a >> (reg_b[14:10] - reg_a[14:10]);
                         aligned_b <= frac_b;
                     end
                     state <= CALCULATE;
@@ -106,26 +100,25 @@ module fpu_add_pipelined (
                             result_sign <= 0;
                         end
                     end
-                    norm_exp <= exp_max;
                     state <= NORMALIZE;
                 end
 
                 NORMALIZE: begin
                     if (sum == 0) begin
                         norm_frac <= 0;
-                        norm_exp <= 0;
+                        exp_max <= 0;
                         result_sign <= 0;
                     end else begin
                         if (sum[11]) begin
                             // Overflow case - shift right by 1
                             norm_frac <= sum[11:1];
-                            norm_exp <= norm_exp + 1;
+                            exp_max <= exp_max + 1;
                         end else begin
                             // Normal case - shift left until MSB is 1
                             norm_frac <= sum[10:0];
                             if (!sum[10]) begin
                                 norm_frac <= sum[9:0] << 1;
-                                norm_exp <= norm_exp - 1;
+                                exp_max <= exp_max - 1;
                             end
                         end
                     end
@@ -144,7 +137,7 @@ module fpu_add_pipelined (
                         result <= {sign_b, 5'b11111, 10'b0}; // B is infinity
                     end else begin
                         // Pack normal/denormal result
-                        result <= {result_sign, norm_exp, norm_frac[9:0]};
+                        result <= {result_sign, exp_max, norm_frac[9:0]};
                     end
                     state <= IDLE;
                 end

@@ -43,12 +43,7 @@ module tqvp_dsatizabal_fpu (
     typedef enum logic [2:0] {
         ADD     = 3'b000,
         SUB     = 3'b001,
-        MULT    = 3'b010,
-        DIV     = 3'b011,
-        SQRT    = 3'b100,
-        ABS     = 3'b101,
-        MIN     = 3'b110,
-        CONV    = 3'b111
+        MULT    = 3'b010
     } fpu_operations_t;
 
     // === Muxed B for subtract
@@ -151,8 +146,5 @@ module tqvp_dsatizabal_fpu (
 
     assign uo_out           = 0;
     assign user_interrupt   = 0;
-
-    // Prevent unused warnings
-    wire _unused = &{ui_in, data_read_n};
 
 endmodule
