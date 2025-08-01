@@ -11,7 +11,7 @@ module fpu_add_tb;
     wire valid_out;
 
     // Instantiate the DUT
-    fpu_add_pipelined dut (
+    fpu_adder dut (
         .clk(clk),
         .rst_n(rst_n),
         .a(a),

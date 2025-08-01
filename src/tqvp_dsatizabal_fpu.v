@@ -53,7 +53,7 @@ module tqvp_dsatizabal_fpu (
     wire [15:0] add_result;
     wire        add_valid_out;
 
-    fpu_add_pipelined add_inst (
+    fpu_adder add_inst (
         .clk(clk),
         .rst_n(rst_n),
         .valid_in(valid_in && (operation == ADD || operation == SUB) && (state == OPERANDS_READY)),
@@ -67,7 +67,7 @@ module tqvp_dsatizabal_fpu (
     wire [15:0] mul_result;
     wire        mul_valid_out;
 
-    fpu_mult_pipelined mul_inst (
+    fpu_mult mul_inst (
         .clk(clk),
         .rst_n(rst_n),
         .valid_in(valid_in && (operation == MULT) && (state == OPERANDS_READY)),

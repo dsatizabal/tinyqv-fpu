@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 `default_nettype none
 
-module fpu_add_pipelined (
+module fpu_adder (
     input wire clk,
     input wire rst_n,
     input wire [15:0] a,

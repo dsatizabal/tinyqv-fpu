@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 `default_nettype none
 
-module fpu_mult_pipelined (
+module fpu_mult (
     input  wire        clk,
     input  wire        rst_n,
     input  wire        valid_in,

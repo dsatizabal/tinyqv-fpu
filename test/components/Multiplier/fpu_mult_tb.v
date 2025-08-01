@@ -12,7 +12,7 @@ module fpu_mult_tb;
     wire [15:0] result;
 
     // Instantiate the pipelined multiplier
-    fpu_mult_pipelined uut (
+    fpu_mult uut (
         .clk(clk),
         .rst_n(rst_n),
         .valid_in(valid_in),
