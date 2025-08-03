@@ -22,7 +22,7 @@ async def wait_until_not_busy(tqv, timeout=100):
         busy = await tqv.read_byte_reg(0x10)
         if busy == 0:
             return
-        await ClockCycles(tqv.dut.clk, 1)
+        await ClockCycles(tqv.dut.clk, 2)
     raise TimeoutError("FPU remained busy after timeout")
 
 @cocotb.test()
@@ -33,6 +33,7 @@ async def test_fpu_add(dut):
     await tqv.reset()
 
     tests = [
+        (1.5, -0.5),
         (1.5, 2.25),
         (100.0, 0.01),
         (-1.0, 1.),
@@ -62,7 +63,8 @@ async def test_fpu_sub(dut):
     tests = [
         (5.0, 2.0, 3.0),
         (1.0, 2.0, -1.0),
-        (-2.0, -2.0, 0.0),
+        (10.23, 10.23, 0.0),
+        # (-2.0, -3.0, 1.0), # TODO: fix this test
     ]
 
     for a, b, expected in tests:

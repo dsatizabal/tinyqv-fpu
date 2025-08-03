@@ -44,6 +44,7 @@ async def test_add_mul_sub_half_precision(dut):
     await RisingEdge(dut.clk)
 
     tests = [
+        (-2.0, -2.0),
         (3.5, 1.25),
         (-2.0, 5.0),
         (0.0, 0.0),

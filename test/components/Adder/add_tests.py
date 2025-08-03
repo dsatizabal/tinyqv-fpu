@@ -1,9 +1,10 @@
 import cocotb
-from cocotb.triggers import RisingEdge
-from cocotb.clock import Clock
+from cocotb.triggers import Timer
 import struct
 import math
 import numpy as np
+
+# === Helpers ===
 
 def float_to_half_bin(f):
     return struct.unpack('>H', struct.pack('>e', f))[0]
@@ -11,36 +12,37 @@ def float_to_half_bin(f):
 def half_bin_to_float(h):
     return struct.unpack('>e', struct.pack('>H', h & 0xFFFF))[0]
 
+# === Driver ===
+
 async def apply_and_wait(dut, a_float, b_float):
     a_bin = float_to_half_bin(a_float)
     b_bin = float_to_half_bin(b_float)
-    dut.a.value = a_bin  # lower 16 bits
+
+    dut.a.value = a_bin
     dut.b.value = b_bin
-    dut.valid_in.value = 1
+    dut.req_in.value = 1
 
-    await RisingEdge(dut.clk)
-    dut.valid_in.value = 0
+    await Timer(10, units='ns')
 
-    counter = 0
+    while dut.ack_out.value != 1:
+        await Timer(10, units='ns')
 
-    # Wait for valid_out
-    while dut.valid_out.value != 1:
-        await RisingEdge(dut.clk)
-        counter += 1
-        if counter > 50:  # Timeout after 1000 cycles
-            raise TimeoutError("FPU did not produce output in time")
+    raw_result = int(dut.result.value)
+    result_float = half_bin_to_float(raw_result)
 
-    raw_result = int(dut.result.value) & 0xFFFF
-    return half_bin_to_float(raw_result)
+    dut.req_in.value = 0
+    await Timer(100, units='ns')
+
+    return result_float
+
+# === Tests ===
 
 @cocotb.test()
-async def test_fpu_add_normal(dut):
-    cocotb.start_soon(Clock(dut.clk, 10, units='ns').start())
-    dut.rst_n.value = 0
-    dut.valid_in.value = 0
-    await RisingEdge(dut.clk)
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
+async def test_async_fpu_add_normal(dut):
+    dut.req_in.value = 0
+    dut.a.value = 0
+    dut.b.value = 0
+    await Timer(100, units='ns')
 
     tests = [
         (0.0, 0.0),
@@ -59,13 +61,9 @@ async def test_fpu_add_normal(dut):
         dut._log.info(f"PASS: {a} + {b} = {actual}")
 
 @cocotb.test()
-async def test_fpu_add_with_signs(dut):
-    cocotb.start_soon(Clock(dut.clk, 10, units='ns').start())
-    dut.rst_n.value = 0
-    dut.valid_in.value = 0
-    await RisingEdge(dut.clk)
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
+async def test_async_fpu_add_with_signs(dut):
+    dut.req_in.value = 0
+    await Timer(100, units='ns')
 
     tests = [
         (-1.0, -2.0),
@@ -84,13 +82,9 @@ async def test_fpu_add_with_signs(dut):
         dut._log.info(f"PASS: {a} + {b} = {actual}")
 
 @cocotb.test()
-async def test_fpu_subtraction(dut):
-    cocotb.start_soon(Clock(dut.clk, 10, units='ns').start())
-    dut.rst_n.value = 0
-    dut.valid_in.value = 0
-    await RisingEdge(dut.clk)
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
+async def test_async_fpu_add_subtraction(dut):
+    dut.req_in.value = 0
+    await Timer(100, units='ns')
 
     tests = [
         (5.0, 2.0),
@@ -107,13 +101,9 @@ async def test_fpu_subtraction(dut):
         dut._log.info(f"PASS: {a} - {b} = {actual}")
 
 @cocotb.test()
-async def test_fpu_edge_cases(dut):
-    cocotb.start_soon(Clock(dut.clk, 10, units='ns').start())
-    dut.rst_n.value = 0
-    dut.valid_in.value = 0
-    await RisingEdge(dut.clk)
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
+async def test_async_fpu_add_edge_cases(dut):
+    dut.req_in.value = 0
+    await Timer(100, units='ns')
 
     nan = float('nan')
     inf = float('inf')
